@@ -3013,8 +3013,6 @@ EOF
         # RAID 设备的路径可能不是标准块设备，直接执行 smartctl
         cat >> $tmpf << EOF
 
-        # smartctl 带 -j 参数时，即使退出码非零（如 exit_status=64 表示设备告警）
-        # 仍会输出有效 JSON。设备状态应由前端解析 JSON 内容判断，而非丢弃数据。
         my \$raid_out = qx{timeout 1 smartctl $device $device_args -a -j 2>/dev/null};
         if (\$raid_out =~ /^\s*\{/) {
             \$res->{raid$raidi} = \$raid_out;
@@ -3026,6 +3024,12 @@ EOF
         let raidi++
     done < <(smartctl --scan 2>/dev/null)
     echo "已添加 $raidi 块 RAID 卡存储设备"
+
+    # 添加 RAID 设备数量字段，供前端动态渲染
+    cat >> $tmpf << EOF
+
+        \$res->{raid_count} = $raidi;
+EOF
 
     ###################  修改node.pm   ##########################
     log_info "修改node.pm："
@@ -3416,80 +3420,78 @@ EOF
 EOF
     done
 
-    # 动态为每个 RAID 卡硬盘添加 JavaScript 代码
-    for i in $(seq 0 $((raidi - 1))); do
-        cat >> $tmpf << EOF
+    # 动态 RAID 显示：根据 raid_count 遍历所有 RAID 设备
+    cat >> $tmpf << 'EOF'
 
     {
-          itemId: 'raid${i}',
+          itemId: 'raid-all',
           colspan: 2,
           printBar: false,
-          title: gettext('阵列卡硬盘${i}'),
-          textField: 'raid${i}',
-          renderer:function(value){
-              try{
-                  let v = JSON.parse(value);
+          title: gettext('阵列卡硬盘'),
+          textField: 'raid_count',
+          cellWrap: true,
+          renderer: function(value, metaData, record) {
+              let count = parseInt(value) || 0;
+              if (count === 0) {
+                  return '<span style="color: #888;">未检测到阵列卡硬盘</span>';
+              }
 
-                  // 场景 1：空 JSON（硬盘不存在或已移除）
-                  if (Object.keys(v).length === 0) {
-                      return '<span style="color: #888;">未检测到阵列卡硬盘（可能已移除）</span>';
-                  }
+              function htmlEscape(s) {
+                  if (!s) return '';
+                  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+              }
 
-                  // HTML 转义函数
-                  function htmlEscape(s) {
-                      if (!s) return '';
-                      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-                  }
+              let lines = [];
+              for (let i = 0; i < count; i++) {
+                  let raidData = record.get('raid' + i);
+                  if (!raidData) continue;
 
-                  // 检查 ATA 设备型号
-                  let model = htmlEscape(v.model_name);
-                  // 或者 SCSI 设备型号
-                  if (!model && v.scsi_model_name) {
-                      let vendor = htmlEscape(v.scsi_vendor || '');
-                      let scsiModel = htmlEscape(v.scsi_model_name);
-                      model = (vendor ? vendor + ' ' : '') + scsiModel;
-                  }
-                  if (!model) {
-                      return '<span style="color: #f39c12;">阵列卡硬盘信息不完整（建议检查连接状态）</span>';
-                  }
+                  try {
+                      let v = JSON.parse(raidData);
+                      if (Object.keys(v).length === 0) continue;
 
-                  // 场景 2：构建正常显示内容
-                  let parts = [model];
-
-                  // 温度
-                  if (v.temperature?.current !== undefined && v.temperature.current > 0) {
-                      let tempNum = Number(v.temperature.current);
-                      let tempColor = tempNum < 40 ? '#27ae60' : (tempNum < 50 ? '#f39c12' : '#e74c3c');
-                      parts.push('温度: <span style="color: ' + tempColor + '; font-weight: 600;">' + tempNum + '°C</span>');
-                  }
-
-                  // 通电时间（ATA 设备）
-                  if (v.power_on_time?.hours !== undefined) {
-                      parts.push('通电: ' + v.power_on_time.hours + '时');
-                  }
-
-                  // SMART 状态（先检查是否支持）
-                  if (v.smart_support?.available === false) {
-                      parts.push('SMART: <span style="color: #888;">不支持</span>');
-                  } else {
-                      let smartPassed = v.smart_status?.passed;
-                      if (smartPassed === undefined) {
-                          smartPassed = v.ata_smart_data?.self_test?.status?.passed;
+                      let model = htmlEscape(v.model_name);
+                      if (!model && v.scsi_model_name) {
+                          let vendor = htmlEscape(v.scsi_vendor || '');
+                          let scsiModel = htmlEscape(v.scsi_model_name);
+                          model = (vendor ? vendor + ' ' : '') + scsiModel;
                       }
-                      if (smartPassed !== undefined) {
-                          parts.push('SMART: ' + (smartPassed ? '<span style="color: #27ae60;">正常</span>' : '<span style="color: #e74c3c;">警告!</span>'));
+                      if (!model) continue;
+
+                      let parts = ['<b>' + (i + 1) + '.</b> ' + model];
+
+                      if (v.temperature?.current !== undefined && v.temperature.current > 0) {
+                          let tempNum = Number(v.temperature.current);
+                          let tempColor = tempNum < 40 ? '#27ae60' : (tempNum < 50 ? '#f39c12' : '#e74c3c');
+                          parts.push('温度: <span style="color: ' + tempColor + '; font-weight: 600;">' + tempNum + '°C</span>');
                       }
+
+                      if (v.power_on_time?.hours !== undefined) {
+                          parts.push('通电: ' + v.power_on_time.hours + '时');
+                      }
+
+                      if (v.smart_support?.available === false) {
+                          parts.push('SMART: <span style="color: #888;">不支持</span>');
+                      } else {
+                          let smartPassed = v.smart_status?.passed;
+                          if (smartPassed === undefined) {
+                              smartPassed = v.ata_smart_data?.self_test?.status?.passed;
+                          }
+                          if (smartPassed !== undefined) {
+                              parts.push('SMART: ' + (smartPassed ? '<span style="color: #27ae60;">正常</span>' : '<span style="color: #e74c3c;">警告!</span>'));
+                          }
+                      }
+
+                      lines.push(parts.join(' | '));
+                  } catch(e) {
+                      // skip invalid JSON
                   }
+              }
 
-                  return parts.join(' | ');
-
-              }catch(e){
-                  return '<span style="color: #888;">无法获取阵列卡硬盘信息（可能使用 HBA 直通）</span>';
-              };
-           }
+              return lines.length > 0 ? lines.join('<br/>') : '<span style="color: #888;">未检测到阵列卡硬盘</span>';
+          }
     },
 EOF
-    done
 
     if [ "$enable_ups" = true ]; then
         cat >> $tmpf << 'EOF'
@@ -3583,17 +3585,22 @@ EOF
 
     log_info "修改页面高度"
     # 统计添加了几条内容（2个基础项 + NVME + SATA + RAID + UPS）
+    # RAID 使用动态渲染，只占用 1 个 UI 元素，但需要额外高度显示多行
+    raid_ui_count=0
+    if [ "$raidi" -gt 0 ]; then
+        raid_ui_count=1
+    fi
     if [ "$enable_ups" = true ]; then
-        addRs=$((2 + nvi + sdi + raidi + 1))
+        addRs=$((2 + nvi + sdi + raid_ui_count + 1))
         ups_info="+ 1 个UPS"
     else
-        addRs=$((2 + nvi + sdi + raidi))
+        addRs=$((2 + nvi + sdi + raid_ui_count))
         ups_info=""
     fi
 
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "检测到添加了 $addRs 条监控项 (2个基础项 + $nvi 个NVME + $sdi 个SATA + $raidi 个阵列卡 $ups_info)"
+    echo "检测到添加了 $addRs 条监控项 (2个基础项 + $nvi 个NVME + $sdi 个SATA + $raidi 个阵列卡(动态渲染) $ups_info)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "请选择高度调整方式："
     echo "  1. 自动计算 (推荐，参考 PVE 8 算法：28px/项)"
