@@ -3025,10 +3025,18 @@ EOF
     done < <(smartctl --scan 2>/dev/null)
     echo "已添加 $raidi 块 RAID 卡存储设备"
 
-    # 添加 RAID 设备数量字段，供前端动态渲染
-    cat >> $tmpf << EOF
+    # 将所有 RAID 数据合并为一个 JSON 数组，方便前端渲染
+    cat >> $tmpf << 'EOF'
 
-        \$res->{raid_count} = $raidi;
+        # 合并所有 RAID 数据为 JSON 数组
+        my @raid_list;
+        for my $key (sort grep { /^raid\d+$/ } keys %$res) {
+            my $data = $res->{$key};
+            if ($data && $data =~ /^\s*\{/) {
+                push @raid_list, $data;
+            }
+        }
+        $res->{raid_all} = '[' . join(',', @raid_list) . ']';
 EOF
 
     ###################  修改node.pm   ##########################
@@ -3420,7 +3428,7 @@ EOF
 EOF
     done
 
-    # 动态 RAID 显示：根据 raid_count 遍历所有 RAID 设备
+    # 动态 RAID 显示：解析 raid_all JSON 数组
     cat >> $tmpf << 'EOF'
 
     {
@@ -3428,11 +3436,10 @@ EOF
           colspan: 2,
           printBar: false,
           title: gettext('阵列卡硬盘'),
-          textField: 'raid_count',
+          textField: 'raid_all',
           cellWrap: true,
-          renderer: function(value, metaData, record) {
-              let count = parseInt(value) || 0;
-              if (count === 0) {
+          renderer: function(value) {
+              if (!value || value === '[]') {
                   return '<span style="color: #888;">未检测到阵列卡硬盘</span>';
               }
 
@@ -3441,14 +3448,16 @@ EOF
                   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
               }
 
-              let lines = [];
-              for (let i = 0; i < count; i++) {
-                  let raidData = record.get('raid' + i);
-                  if (!raidData) continue;
+              try {
+                  let raidArray = JSON.parse(value);
+                  if (!Array.isArray(raidArray) || raidArray.length === 0) {
+                      return '<span style="color: #888;">未检测到阵列卡硬盘</span>';
+                  }
 
-                  try {
-                      let v = JSON.parse(raidData);
-                      if (Object.keys(v).length === 0) continue;
+                  let lines = [];
+                  for (let i = 0; i < raidArray.length; i++) {
+                      let v = raidArray[i];
+                      if (!v || Object.keys(v).length === 0) continue;
 
                       let model = htmlEscape(v.model_name);
                       if (!model && v.scsi_model_name) {
@@ -3483,12 +3492,12 @@ EOF
                       }
 
                       lines.push(parts.join(' | '));
-                  } catch(e) {
-                      // skip invalid JSON
                   }
-              }
 
-              return lines.length > 0 ? lines.join('<br/>') : '<span style="color: #888;">未检测到阵列卡硬盘</span>';
+                  return lines.length > 0 ? lines.join('<br/>') : '<span style="color: #888;">未检测到阵列卡硬盘</span>';
+              } catch(e) {
+                  return '<span style="color: #888;">阵列卡硬盘数据解析错误</span>';
+              }
           }
     },
 EOF
