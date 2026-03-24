@@ -3421,7 +3421,7 @@ EOF
         cat >> $tmpf << EOF
 
     {
-          itemId: 'raid${i}0',
+          itemId: 'raid${i}',
           colspan: 2,
           printBar: false,
           title: gettext('阵列卡硬盘${i}'),
