@@ -2932,6 +2932,20 @@ EOF
     done
     echo "已添加 $nvi 块 NVME 硬盘"
 
+    # 将所有 NVMe 数据合并为一个 JSON 数组，方便前端渲染
+    cat >> $tmpf << 'EOF'
+
+        # 合并所有 NVMe 数据为 JSON 数组
+        my @nvme_list;
+        for my $key (sort grep { /^nvme\d+$/ } keys %$res) {
+            my $data = $res->{$key};
+            if ($data && $data =~ /^\s*\{/) {
+                push @nvme_list, $data;
+            }
+        }
+        $res->{nvme_all} = '[' . join(',', @nvme_list) . ']';
+EOF
+
     # SATA 硬盘变量 (动态检测，参考 PVE 8 实现)
     log_info "检测系统中的 SATA 固态和机械硬盘"
     sdi=0
@@ -2972,6 +2986,20 @@ EOF
         let sdi++
     done
     echo "已添加 $sdi 块 SATA 固态和机械硬盘"
+
+    # 将所有 SATA 数据合并为一个 JSON 数组，方便前端渲染
+    cat >> $tmpf << 'EOF'
+
+        # 合并所有 SATA 数据为 JSON 数组
+        my @sata_list;
+        for my $key (sort grep { /^sd\d+$/ } keys %$res) {
+            my $data = $res->{$key};
+            if ($data && $data =~ /^\s*\{/) {
+                push @sata_list, $data;
+            }
+        }
+        $res->{sata_all} = '[' . join(',', @sata_list) . ']';
+EOF
 
     # RAID 卡下的存储设备 (通过 smartctl --scan 检测)
     log_info "检测系统中的 RAID 卡存储设备"
@@ -3198,235 +3226,199 @@ EOF
     },
 EOF
 
-    # 动态为每个 NVME 硬盘添加 JavaScript 代码
-    for i in $(seq 0 $((nvi - 1))); do
-        cat >> $tmpf << EOF
+    # 动态 NVMe 显示：解析 nvme_all JSON 数组
+    cat >> $tmpf << 'EOF'
 
     {
-          itemId: 'nvme${i}0',
+          itemId: 'nvme-all',
           colspan: 2,
           printBar: false,
-	          title: gettext('NVME${i}'),
-	          textField: 'nvme${i}',
-	          renderer:function(value){
-	              function colorizeTemp(temp) {
-	                  let tempNum = Number(temp);
-	                  if (Number.isNaN(tempNum)) {
-	                      return temp + '°C';
-	                  }
-	                  if (tempNum < 50) {
-	                      return '<span style="color: #27ae60; font-weight: 600;">' + tempNum + '°C</span>';
-	                  }
-	                  if (tempNum < 70) {
-	                      return '<span style="color: #f39c12; font-weight: 600;">' + tempNum + '°C</span>';
-	                  }
-	                  return '<span style="color: #e74c3c; font-weight: 600;">' + tempNum + '°C</span>';
-	              }
+          title: gettext('NVME硬盘'),
+          textField: 'nvme_all',
+          cellWrap: true,
+          renderer: function(value) {
+              if (!value || value === '[]') {
+                  return '<span style="color: #888;">未检测到 NVME 硬盘</span>';
+              }
 
-	              function colorizeHealth(percent) {
-	                  let healthNum = Number(percent);
-	                  if (Number.isNaN(healthNum)) {
-	                      return percent + '%';
-	                  }
-	                  if (healthNum >= 80) {
-	                      return '<span style="color: #27ae60; font-weight: 600;">' + healthNum + '%</span>';
-	                  }
-	                  if (healthNum >= 50) {
-	                      return '<span style="color: #f39c12; font-weight: 600;">' + healthNum + '%</span>';
-	                  }
-	                  return '<span style="color: #e74c3c; font-weight: 600;">' + healthNum + '%</span>';
-	              }
+              function colorizeTemp(temp) {
+                  let tempNum = Number(temp);
+                  if (Number.isNaN(tempNum)) return temp + '°C';
+                  if (tempNum < 50) return '<span style="color: #27ae60; font-weight: 600;">' + tempNum + '°C</span>';
+                  if (tempNum < 70) return '<span style="color: #f39c12; font-weight: 600;">' + tempNum + '°C</span>';
+                  return '<span style="color: #e74c3c; font-weight: 600;">' + tempNum + '°C</span>';
+              }
 
-	              try{
-	                  let  v = JSON.parse(value);
+              function colorizeHealth(percent) {
+                  let healthNum = Number(percent);
+                  if (Number.isNaN(healthNum)) return percent + '%';
+                  if (healthNum >= 80) return '<span style="color: #27ae60; font-weight: 600;">' + healthNum + '%</span>';
+                  if (healthNum >= 50) return '<span style="color: #f39c12; font-weight: 600;">' + healthNum + '%</span>';
+                  return '<span style="color: #e74c3c; font-weight: 600;">' + healthNum + '%</span>';
+              }
 
-                  // 检查是否为空 JSON（硬盘不存在或已直通）
-                  if (Object.keys(v).length === 0) {
-                      return '<span style="color: #888;">未检测到 NVME（可能已直通或移除）</span>';
+              try {
+                  let nvmeArray = JSON.parse(value);
+                  if (!Array.isArray(nvmeArray) || nvmeArray.length === 0) {
+                      return '<span style="color: #888;">未检测到 NVME 硬盘</span>';
                   }
 
-                  // 检查型号
-                  let model = v.model_name;
-                  if (!model) {
-                      return '<span style="color: #f39c12;">NVME 信息不完整（建议检查连接状态）</span>';
-                  }
+                  let lines = [];
+                  for (let i = 0; i < nvmeArray.length; i++) {
+                      let v = nvmeArray[i];
+                      if (!v || Object.keys(v).length === 0) continue;
 
-                  // 构建显示内容
-                  let parts = [model];
-                  let hasData = false;
+                      let model = v.model_name;
+                      if (!model) continue;
 
-	                  // 温度
-	                  if (v.temperature?.current !== undefined) {
-	                      parts.push('温度: ' + colorizeTemp(v.temperature.current));
-	                      hasData = true;
-	                  }
+                      let parts = ['<b>' + (i + 1) + '.</b> ' + model];
+                      let hasData = false;
 
-                  // 健康度和读写
-                  let log = v.nvme_smart_health_information_log;
-	                  if (log) {
-	                      // 健康度
-	                      if (log.percentage_used !== undefined) {
-	                          let healthRemain = 100 - log.percentage_used;
-	                          let health = '健康: ' + colorizeHealth(healthRemain);
-	                          if (log.media_errors !== undefined && log.media_errors > 0) {
-	                              health += ' <span style="color: #e74c3c;">(0E: ' + log.media_errors + ')</span>';
-	                          }
-	                          parts.push(health);
-	                          hasData = true;
-	                      }
-
-	                      if (log.unsafe_shutdowns !== undefined) {
-	                          let shutdownColor = Number(log.unsafe_shutdowns) > 0 ? '#e74c3c' : '#27ae60';
-	                          parts.push('异常断电: <span style="color: ' + shutdownColor + '; font-weight: 600;">' + log.unsafe_shutdowns + '</span>');
-	                          hasData = true;
-	                      }
-
-	                      // 读写
-                      if (log.data_units_read && log.data_units_written) {
-                          let read = (log.data_units_read / 1956882).toFixed(1);
-                          let write = (log.data_units_written / 1956882).toFixed(1);
-                          parts.push('读写: ' + read + 'T / ' + write + 'T');
+                      if (v.temperature?.current !== undefined) {
+                          parts.push('温度: ' + colorizeTemp(v.temperature.current));
                           hasData = true;
                       }
-                  }
 
-                  // 通电时间
-                  if (v.power_on_time?.hours !== undefined) {
-                      let pot = '通电: ' + v.power_on_time.hours + '时';
-                      if (v.power_cycle_count) {
-                          pot += ' (次: ' + v.power_cycle_count + ')';
+                      let log = v.nvme_smart_health_information_log;
+                      if (log) {
+                          if (log.percentage_used !== undefined) {
+                              let healthRemain = 100 - log.percentage_used;
+                              let health = '健康: ' + colorizeHealth(healthRemain);
+                              if (log.media_errors !== undefined && log.media_errors > 0) {
+                                  health += ' <span style="color: #e74c3c;">(0E: ' + log.media_errors + ')</span>';
+                              }
+                              parts.push(health);
+                              hasData = true;
+                          }
+
+                          if (log.unsafe_shutdowns !== undefined) {
+                              let shutdownColor = Number(log.unsafe_shutdowns) > 0 ? '#e74c3c' : '#27ae60';
+                              parts.push('异常断电: <span style="color: ' + shutdownColor + '; font-weight: 600;">' + log.unsafe_shutdowns + '</span>');
+                              hasData = true;
+                          }
+
+                          if (log.data_units_read && log.data_units_written) {
+                              let read = (log.data_units_read / 1956882).toFixed(1);
+                              let write = (log.data_units_written / 1956882).toFixed(1);
+                              parts.push('读写: ' + read + 'T / ' + write + 'T');
+                              hasData = true;
+                          }
                       }
-                      parts.push(pot);
-                      hasData = true;
+
+                      if (v.power_on_time?.hours !== undefined) {
+                          let pot = '通电: ' + v.power_on_time.hours + '时';
+                          if (v.power_cycle_count) pot += ' (次: ' + v.power_cycle_count + ')';
+                          parts.push(pot);
+                          hasData = true;
+                      }
+
+                      if (v.smart_status?.passed !== undefined) {
+                          parts.push('SMART: ' + (v.smart_status.passed ? '<span style="color: #27ae60;">正常</span>' : '<span style="color: #e74c3c;">警告!</span>'));
+                          hasData = true;
+                      }
+
+                      if (!hasData) {
+                          parts.push('<span style="color: #888;">无法获取详细信息</span>');
+                      }
+
+                      lines.push(parts.join(' | '));
                   }
 
-                  // SMART 状态
-                  if (v.smart_status?.passed !== undefined) {
-                      parts.push('SMART: ' + (v.smart_status.passed ? '<span style="color: #27ae60;">正常</span>' : '<span style="color: #e74c3c;">警告!</span>'));
-                      hasData = true;
-                  }
-
-                  // 如果只有型号，没有其他数据，说明可能是权限或驱动问题
-                  if (!hasData) {
-                      return model + ' <span style="color: #888;">| 无法获取详细信息（检查 smartctl 权限或驱动）</span>';
-                  }
-
-                  return parts.join(' | ');
-
-              }catch(e){
-                  return '<span style="color: #888;">无法解析 NVME 信息（可能使用控制器直通）</span>';
-              };
-
-           }
+                  return lines.length > 0 ? lines.join('<br/>') : '<span style="color: #888;">未检测到 NVME 硬盘</span>';
+              } catch(e) {
+                  return '<span style="color: #888;">NVME 数据解析错误</span>';
+              }
+          }
     },
 EOF
-    done
 
-    # 动态为每个 SATA 硬盘添加 JavaScript 代码
-    for i in $(seq 0 $((sdi - 1))); do
-        # 获取硬盘类型（固态/机械）
-        sd="/dev/sd$(echo {a..z} | cut -d' ' -f$((i+1)))"
-        sdsn=$(basename $sd 2>/dev/null)
-        sdcr=/sys/block/$sdsn/queue/rotational
-        if [ -f $sdcr ] && [ "$(cat $sdcr)" = "0" ]; then
-            sdtype="固态硬盘$i"
-        else
-            sdtype="机械硬盘$i"
-        fi
-
-        cat >> $tmpf << EOF
+    # 动态 SATA 显示：解析 sata_all JSON 数组
+    cat >> $tmpf << 'EOF'
 
     {
-          itemId: 'sd${i}0',
+          itemId: 'sata-all',
           colspan: 2,
           printBar: false,
-	          title: gettext('${sdtype}'),
-	          textField: 'sd${i}',
-	          renderer:function(value){
-	              function colorizeTemp(temp) {
-	                  let tempNum = Number(temp);
-	                  if (Number.isNaN(tempNum)) {
-	                      return temp + '°C';
-	                  }
-	                  if (tempNum < 40) {
-	                      return '<span style="color: #27ae60; font-weight: 600;">' + tempNum + '°C</span>';
-	                  }
-	                  if (tempNum < 50) {
-	                      return '<span style="color: #f39c12; font-weight: 600;">' + tempNum + '°C</span>';
-	                  }
-	                  return '<span style="color: #e74c3c; font-weight: 600;">' + tempNum + '°C</span>';
-	              }
+          title: gettext('SATA硬盘'),
+          textField: 'sata_all',
+          cellWrap: true,
+          renderer: function(value) {
+              if (!value || value === '[]') {
+                  return '<span style="color: #888;">未检测到 SATA 硬盘</span>';
+              }
 
-	              function findAtaSmartRawValue(table, ids) {
-	                  if (!Array.isArray(table)) {
-	                      return null;
-	                  }
-	                  let found = table.find(item => ids.includes(item?.id));
-	                  if (!found || !found.raw) {
-	                      return null;
-	                  }
-	                  return found.raw.string ?? found.raw.value ?? null;
-	              }
+              function colorizeTemp(temp) {
+                  let tempNum = Number(temp);
+                  if (Number.isNaN(tempNum)) return temp + '°C';
+                  if (tempNum < 40) return '<span style="color: #27ae60; font-weight: 600;">' + tempNum + '°C</span>';
+                  if (tempNum < 50) return '<span style="color: #f39c12; font-weight: 600;">' + tempNum + '°C</span>';
+                  return '<span style="color: #e74c3c; font-weight: 600;">' + tempNum + '°C</span>';
+              }
 
-	              try{
-	                  let  v = JSON.parse(value);
-	                  console.log(v)
+              function findAtaSmartRawValue(table, ids) {
+                  if (!Array.isArray(table)) return null;
+                  let found = table.find(item => ids.includes(item?.id));
+                  if (!found || !found.raw) return null;
+                  return found.raw.string ?? found.raw.value ?? null;
+              }
 
-                  // 场景 1：硬盘休眠（节能模式）
-                  if (v.standy === true) {
-                      return '<span style="color: #27ae60;">硬盘休眠中（省电模式）</span>'
+              try {
+                  let sataArray = JSON.parse(value);
+                  if (!Array.isArray(sataArray) || sataArray.length === 0) {
+                      return '<span style="color: #888;">未检测到 SATA 硬盘</span>';
                   }
 
-                  // 场景 2：空 JSON（硬盘不存在或已直通）
-                  if (Object.keys(v).length === 0) {
-                      return '<span style="color: #888;">未检测到硬盘（可能已直通或移除）</span>';
-                  }
+                  let lines = [];
+                  for (let i = 0; i < sataArray.length; i++) {
+                      let v = sataArray[i];
+                      if (!v) continue;
 
-                  // 场景 3：检查型号
-                  let model = v.model_name;
-                  if (!model) {
-                      return '<span style="color: #f39c12;">硬盘信息不完整（建议检查连接状态）</span>';
-                  }
-
-                  // 场景 4：构建正常显示内容
-                  let parts = [model];
-
-	                  // 温度
-	                  if (v.temperature?.current !== undefined) {
-	                      parts.push('温度: ' + colorizeTemp(v.temperature.current));
-	                  }
-
-                  // 通电时间
-                  if (v.power_on_time?.hours !== undefined) {
-                      let pot = '通电: ' + v.power_on_time.hours + '时';
-                      if (v.power_cycle_count) {
-                          pot += ',次: ' + v.power_cycle_count;
+                      if (v.standy === true) {
+                          lines.push('<b>' + (i + 1) + '.</b> <span style="color: #27ae60;">硬盘休眠中（省电模式）</span>');
+                          continue;
                       }
-                      parts.push(pot);
+
+                      if (Object.keys(v).length === 0) continue;
+
+                      let model = v.model_name;
+                      if (!model) {
+                          lines.push('<b>' + (i + 1) + '.</b> <span style="color: #f39c12;">硬盘信息不完整</span>');
+                          continue;
+                      }
+
+                      let parts = ['<b>' + (i + 1) + '.</b> ' + model];
+
+                      if (v.temperature?.current !== undefined) {
+                          parts.push('温度: ' + colorizeTemp(v.temperature.current));
+                      }
+
+                      if (v.power_on_time?.hours !== undefined) {
+                          let pot = '通电: ' + v.power_on_time.hours + '时';
+                          if (v.power_cycle_count) pot += ',次: ' + v.power_cycle_count;
+                          parts.push(pot);
+                      }
+
+                      if (v.smart_status?.passed !== undefined) {
+                          parts.push('SMART: ' + (v.smart_status.passed ? '<span style="color: #27ae60;">正常</span>' : '<span style="color: #e74c3c;">警告!</span>'));
+                      }
+
+                      let unsafeShutdowns = findAtaSmartRawValue(v.ata_smart_attributes?.table, [174, 192]);
+                      if (unsafeShutdowns !== null && unsafeShutdowns !== undefined && unsafeShutdowns !== '') {
+                          let shutdownCount = String(unsafeShutdowns).trim();
+                          let shutdownColor = Number(shutdownCount) > 0 ? '#e74c3c' : '#27ae60';
+                          parts.push('异常断电: <span style="color: ' + shutdownColor + '; font-weight: 600;">' + shutdownCount + '</span>');
+                      }
+
+                      lines.push(parts.join(' | '));
                   }
 
-	                  // SMART 状态
-	                  if (v.smart_status?.passed !== undefined) {
-	                      parts.push('SMART: ' + (v.smart_status.passed ? '<span style="color: #27ae60;">正常</span>' : '<span style="color: #e74c3c;">警告!</span>'));
-	                  }
-
-	                  let unsafeShutdowns = findAtaSmartRawValue(v.ata_smart_attributes?.table, [174, 192]);
-	                  if (unsafeShutdowns !== null && unsafeShutdowns !== undefined && unsafeShutdowns !== '') {
-	                      let shutdownCount = String(unsafeShutdowns).trim();
-	                      let shutdownColor = Number(shutdownCount) > 0 ? '#e74c3c' : '#27ae60';
-	                      parts.push('异常断电: <span style="color: ' + shutdownColor + '; font-weight: 600;">' + shutdownCount + '</span>');
-	                  }
-
-                  return parts.join(' | ');
-
-              }catch(e){
-                  // JSON 解析失败
-                  return '<span style="color: #888;">无法获取硬盘信息（可能使用 HBA 直通）</span>';
-              };
-           }
+                  return lines.length > 0 ? lines.join('<br/>') : '<span style="color: #888;">未检测到 SATA 硬盘</span>';
+              } catch(e) {
+                  return '<span style="color: #888;">SATA 数据解析错误</span>';
+              }
+          }
     },
 EOF
-    done
 
     # 动态 RAID 显示：解析 raid_all JSON 数组
     cat >> $tmpf << 'EOF'
@@ -3599,17 +3591,25 @@ EOF
     if [ "$raidi" -gt 0 ]; then
         raid_ui_count=1
     fi
+    nvme_ui_count=0
+    if [ "$nvi" -gt 0 ]; then
+        nvme_ui_count=1
+    fi
+    sata_ui_count=0
+    if [ "$sdi" -gt 0 ]; then
+        sata_ui_count=1
+    fi
     if [ "$enable_ups" = true ]; then
-        addRs=$((2 + nvi + sdi + raid_ui_count + 1))
+        addRs=$((2 + nvme_ui_count + sata_ui_count + raid_ui_count + 1))
         ups_info="+ 1 个UPS"
     else
-        addRs=$((2 + nvi + sdi + raid_ui_count))
+        addRs=$((2 + nvme_ui_count + sata_ui_count + raid_ui_count))
         ups_info=""
     fi
 
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "检测到添加了 $addRs 条监控项 (2个基础项 + $nvi 个NVME + $sdi 个SATA + $raidi 个阵列卡(动态渲染) $ups_info)"
+    echo "检测到添加了 $addRs 条监控项 (2个基础项 + $nvi 个NVME(动态渲染) + $sdi 个SATA(动态渲染) + $raidi 个阵列卡(动态渲染) $ups_info)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "请选择高度调整方式："
     echo "  1. 自动计算 (推荐，参考 PVE 8 算法：28px/项)"
