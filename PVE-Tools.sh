@@ -3113,22 +3113,23 @@ EOF
         # RAID 设备的路径可能不是标准块设备，直接执行 smartctl
         cat >> $tmpf << EOF
 
-        # 获取 RAID 设备完整信息
-        my \$raid_full = qx{timeout 1 smartctl $device $device_args -a -j 2>/dev/null};
-        my \$raid_data = '{}';
-        if (\$raid_full =~ /^\s*\{/) {
-            # 解析并精简数据，只保留必要字段
-            \$raid_data = "{\n";
-            \$raid_data .= "  \\"model_name\\": \\"" . (\$raid_full =~ /"model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
-            \$raid_data .= "  \\"scsi_model_name\\": \\"" . (\$raid_full =~ /"scsi_model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
-            \$raid_data .= "  \\"scsi_vendor\\": \\"" . (\$raid_full =~ /"scsi_vendor"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
-            \$raid_data .= "  \\"temperature\\": {\\"current\\": " . (\$raid_full =~ /"temperature"\s*:\s*{[^}]*"current"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
-            \$raid_data .= "  \\"power_on_time\\": {\\"hours\\": " . (\$raid_full =~ /"power_on_time"\s*:\s*{[^}]*"hours"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
-            \$raid_data .= "  \\"smart_support\\": {\\"available\\": " . (\$raid_full =~ /"smart_support"\s*:\s*{[^}]*"available"\s*:\s*(true|false)/ ? \$1 : 'false') . "},\n";
-            \$raid_data .= "  \\"smart_status\\": {\\"passed\\": " . (\$raid_full =~ /"smart_status"\s*:\s*{[^}]*"passed"\s*:\s*(true|false)/ ? \$1 : 'true') . "}\n";
-            \$raid_data .= "}";
+        {   # 块作用域，避免变量重复声明
+            my \$raid_full = qx{timeout 1 smartctl $device $device_args -a -j 2>/dev/null};
+            my \$raid_data = '{}';
+            if (\$raid_full =~ /^\s*\{/) {
+                # 解析并精简数据，只保留必要字段
+                \$raid_data = "{\n";
+                \$raid_data .= "  \\"model_name\\": \\"" . (\$raid_full =~ /"model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
+                \$raid_data .= "  \\"scsi_model_name\\": \\"" . (\$raid_full =~ /"scsi_model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
+                \$raid_data .= "  \\"scsi_vendor\\": \\"" . (\$raid_full =~ /"scsi_vendor"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
+                \$raid_data .= "  \\"temperature\\": {\\"current\\": " . (\$raid_full =~ /"temperature"\s*:\s*{[^}]*"current"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
+                \$raid_data .= "  \\"power_on_time\\": {\\"hours\\": " . (\$raid_full =~ /"power_on_time"\s*:\s*{[^}]*"hours"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
+                \$raid_data .= "  \\"smart_support\\": {\\"available\\": " . (\$raid_full =~ /"smart_support"\s*:\s*{[^}]*"available"\s*:\s*(true|false)/ ? \$1 : 'false') . "},\n";
+                \$raid_data .= "  \\"smart_status\\": {\\"passed\\": " . (\$raid_full =~ /"smart_status"\s*:\s*{[^}]*"passed"\s*:\s*(true|false)/ ? \$1 : 'true') . "}\n";
+                \$raid_data .= "}";
+            }
+            \$res->{raid$raidi} = \$raid_data;
         }
-        \$res->{raid$raidi} = \$raid_data;
 EOF
         echo "检测到 RAID 存储设备: $device $device_args (raid$raidi)"
         let raidi++
