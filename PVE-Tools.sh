@@ -3022,7 +3022,7 @@ EOF
                     \$is_standby = 1 if \$hdparm_out =~ /standby/i;
                 }
                 if (\$is_standby) {
-                    \$sd_data = '{"standy": true}';
+                    \$sd_data = '{"standy": 1}';
                 } else {
                     # 获取精简信息
                     my \$sd_info_json = \`smartctl $sd -i -j 2>/dev/null\`;
