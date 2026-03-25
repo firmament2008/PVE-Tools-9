@@ -2923,9 +2923,46 @@ EOF
     for nvme in $(ls /dev/nvme[0-9] 2> /dev/null); do
         chmod +s /usr/sbin/smartctl 2>/dev/null
 
+        # 使用 -i 获取基本信息 + -H 获取健康状态，避免 -a 返回过多数据
         cat >> $tmpf << EOF
 
-        \$res->{nvme$nvi} = \`smartctl $nvme -a -j\`;
+        {
+            my \$nvme_info = \`smartctl $nvme -i -j 2>/dev/null\`;
+            my \$nvme_health = \`smartctl $nvme -H -j 2>/dev/null\`;
+            my \$nvme_data = '{}';
+            if (\$nvme_info =~ /^\s*\{/) {
+                # 提取必要字段，精简 JSON 数据
+                my \$model = (\$nvme_info =~ /"model_name"\s*:\s*"([^"]+)"/) ? \$1 : '';
+                my \$temp = (\$nvme_info =~ /"temperature"\s*:\s*\{[^}]*"current"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$hours = (\$nvme_info =~ /"power_on_time"\s*:\s*\{[^}]*"hours"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$cycles = (\$nvme_info =~ /"power_cycle_count"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$smart_passed = (\$nvme_health =~ /"smart_status"\s*:\s*\{[^}]*"passed"\s*:\s*(true|false)/) ? \$1 : 'true';
+                # NVMe 健康信息日志
+                my \$pct_used = (\$nvme_info =~ /"percentage_used"\s*:\s*(\d+)/) ? \$1 : '';
+                my \$media_err = (\$nvme_info =~ /"media_errors"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$unsafe_shutdown = (\$nvme_info =~ /"unsafe_shutdowns"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$data_read = (\$nvme_info =~ /"data_units_read"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$data_written = (\$nvme_info =~ /"data_units_written"\s*:\s*(\d+)/) ? \$1 : 0;
+                # 构建精简 JSON
+                \$nvme_data = "{\n";
+                \$nvme_data .= "  \\"model_name\\": \\"\$model\\",\n";
+                \$nvme_data .= "  \\"temperature\\": {\\"current\\": \$temp},\n";
+                \$nvme_data .= "  \\"power_on_time\\": {\\"hours\\": \$hours},\n";
+                \$nvme_data .= "  \\"power_cycle_count\\": \$cycles,\n";
+                \$nvme_data .= "  \\"smart_status\\": {\\"passed\\": \$smart_passed}";
+                if (\$pct_used ne '') {
+                    \$nvme_data .= ",\n  \\"nvme_smart_health_information_log\\": {\n";
+                    \$nvme_data .= "    \\"percentage_used\\": \$pct_used,\n";
+                    \$nvme_data .= "    \\"media_errors\\": \$media_err,\n";
+                    \$nvme_data .= "    \\"unsafe_shutdowns\\": \$unsafe_shutdown,\n";
+                    \$nvme_data .= "    \\"data_units_read\\": \$data_read,\n";
+                    \$nvme_data .= "    \\"data_units_written\\": \$data_written\n";
+                    \$nvme_data .= "  }";
+                }
+                \$nvme_data .= "\n}";
+            }
+            \$res->{nvme$nvi} = \$nvme_data;
+        }
 EOF
         echo "检测到 NVME 硬盘: $nvme (nvme$nvi)"
         let nvi++
@@ -2967,20 +3004,57 @@ EOF
         fi
 
         # 硬盘输出信息逻辑，如果硬盘不存在就输出空 JSON
+        # 使用 -i 获取基本信息 + -H 获取健康状态，避免 -a 返回过多数据
         cat >> $tmpf << EOF
 
-        \$res->{sd$sdi} = \`
-            if [ -b $sd ]; then
-                # 增加 SAS 盘检测，SAS 盘不使用 hdparm 检测休眠，防止误报
-                if $hddisk && ! smartctl -i $sd | grep -q "Transport protocol:.*SAS" && hdparm -C $sd 2>/dev/null | grep -iq 'standby'; then
-                    echo '{"standy": true}'
-                else
-                    smartctl $sd -a -j
-                fi
-            else
-                echo '{}'
-            fi
-        \`;
+        {
+            my \$sd_data = '{}';
+            if (-b '$sd') {
+                # 检测是否休眠（SAS 盘跳过 hdparm 检测）
+                my \$is_sas = 0;
+                my \$sd_info = \`smartctl -i $sd 2>/dev/null\`;
+                \$is_sas = 1 if \$sd_info =~ /Transport protocol:.*SAS/i;
+                my \$is_standby = 0;
+                if (!$hddisk || \$is_sas) {
+                    \$is_standby = 0;
+                } else {
+                    my \$hdparm_out = \`hdparm -C $sd 2>/dev/null\`;
+                    \$is_standby = 1 if \$hdparm_out =~ /standby/i;
+                }
+                if (\$is_standby) {
+                    \$sd_data = '{"standy": true}';
+                } else {
+                    # 获取精简信息
+                    my \$sd_info_json = \`smartctl $sd -i -j 2>/dev/null\`;
+                    my \$sd_health_json = \`smartctl $sd -H -j 2>/dev/null\`;
+                    if (\$sd_info_json =~ /^\s*\{/) {
+                        # 提取必要字段
+                        my \$model = (\$sd_info_json =~ /"model_name"\s*:\s*"([^"]+)"/) ? \$1 : '';
+                        my \$temp = (\$sd_info_json =~ /"temperature"\s*:\s*\{[^}]*"current"\s*:\s*(\d+)/) ? \$1 : 0;
+                        my \$hours = (\$sd_info_json =~ /"power_on_time"\s*:\s*\{[^}]*"hours"\s*:\s*(\d+)/) ? \$1 : 0;
+                        my \$cycles = (\$sd_info_json =~ /"power_cycle_count"\s*:\s*(\d+)/) ? \$1 : 0;
+                        my \$smart_passed = (\$sd_health_json =~ /"smart_status"\s*:\s*\{[^}]*"passed"\s*:\s*(true|false)/) ? \$1 : 'true';
+                        # 获取异常断电次数（从 ATA SMART 属性）
+                        my \$unsafe_shutdown = 0;
+                        if (\$sd_info_json =~ /"ata_smart_attributes"/) {
+                            my \$attr_174 = (\$sd_info_json =~ /"id"\s*:\s*174[^}]*"raw"\s*:\s*\{[^}]*"value"\s*:\s*(\d+)/) ? \$1 : 0;
+                            my \$attr_192 = (\$sd_info_json =~ /"id"\s*:\s*192[^}]*"raw"\s*:\s*\{[^}]*"value"\s*:\s*(\d+)/) ? \$1 : 0;
+                            \$unsafe_shutdown = \$attr_174 || \$attr_192;
+                        }
+                        # 构建精简 JSON
+                        \$sd_data = "{\n";
+                        \$sd_data .= "  \\"model_name\\": \\"\$model\\",\n";
+                        \$sd_data .= "  \\"temperature\\": {\\"current\\": \$temp},\n";
+                        \$sd_data .= "  \\"power_on_time\\": {\\"hours\\": \$hours},\n";
+                        \$sd_data .= "  \\"power_cycle_count\\": \$cycles,\n";
+                        \$sd_data .= "  \\"smart_status\\": {\\"passed\\": \$smart_passed},\n";
+                        \$sd_data .= "  \\"unsafe_shutdowns\\": \$unsafe_shutdown\n";
+                        \$sd_data .= "}";
+                    }
+                }
+            }
+            \$res->{sd$sdi} = \$sd_data;
+        }
 EOF
         echo "检测到 $sdtype: $sd (sd$sdi)"
         let sdi++
