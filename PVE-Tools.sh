@@ -2923,26 +2923,25 @@ EOF
     for nvme in $(ls /dev/nvme[0-9] 2> /dev/null); do
         chmod +s /usr/sbin/smartctl 2>/dev/null
 
-        # 使用 -i 获取基本信息 + -H 获取健康状态，避免 -a 返回过多数据
+        # 使用 -a 获取完整信息（-i 可能无法获取 nvme_smart_health_information_log）
         cat >> $tmpf << EOF
 
         {
-            my \$nvme_info = \`smartctl $nvme -i -j 2>/dev/null\`;
-            my \$nvme_health = \`smartctl $nvme -H -j 2>/dev/null\`;
+            my \$nvme_full = \`smartctl $nvme -a -j 2>/dev/null\`;
             my \$nvme_data = '{}';
-            if (\$nvme_info =~ /^\s*\{/) {
+            if (\$nvme_full =~ /^\s*\{/) {
                 # 提取必要字段，精简 JSON 数据
-                my \$model = (\$nvme_info =~ /"model_name"\s*:\s*"([^"]+)"/) ? \$1 : '';
-                my \$temp = (\$nvme_info =~ /"temperature"\s*:\s*\{[^}]*"current"\s*:\s*(\d+)/) ? \$1 : 0;
-                my \$hours = (\$nvme_info =~ /"power_on_time"\s*:\s*\{[^}]*"hours"\s*:\s*(\d+)/) ? \$1 : 0;
-                my \$cycles = (\$nvme_info =~ /"power_cycle_count"\s*:\s*(\d+)/) ? \$1 : 0;
-                my \$smart_passed = (\$nvme_health =~ /"smart_status"\s*:\s*\{[^}]*"passed"\s*:\s*(true|false)/) ? \$1 : 'true';
+                my \$model = (\$nvme_full =~ /"model_name"\s*:\s*"([^"]+)"/) ? \$1 : '';
+                my \$temp = (\$nvme_full =~ /"temperature"\s*:\s*\{[^}]*"current"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$hours = (\$nvme_full =~ /"power_on_time"\s*:\s*\{[^}]*"hours"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$cycles = (\$nvme_full =~ /"power_cycle_count"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$smart_passed = (\$nvme_full =~ /"smart_status"\s*:\s*\{[^}]*"passed"\s*:\s*(true|false)/) ? \$1 : 'true';
                 # NVMe 健康信息日志
-                my \$pct_used = (\$nvme_info =~ /"percentage_used"\s*:\s*(\d+)/) ? \$1 : '';
-                my \$media_err = (\$nvme_info =~ /"media_errors"\s*:\s*(\d+)/) ? \$1 : 0;
-                my \$unsafe_shutdown = (\$nvme_info =~ /"unsafe_shutdowns"\s*:\s*(\d+)/) ? \$1 : 0;
-                my \$data_read = (\$nvme_info =~ /"data_units_read"\s*:\s*(\d+)/) ? \$1 : 0;
-                my \$data_written = (\$nvme_info =~ /"data_units_written"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$pct_used = (\$nvme_full =~ /"percentage_used"\s*:\s*(\d+)/) ? \$1 : '';
+                my \$media_err = (\$nvme_full =~ /"media_errors"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$unsafe_shutdown = (\$nvme_full =~ /"unsafe_shutdowns"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$data_read = (\$nvme_full =~ /"data_units_read"\s*:\s*(\d+)/) ? \$1 : 0;
+                my \$data_written = (\$nvme_full =~ /"data_units_written"\s*:\s*(\d+)/) ? \$1 : 0;
                 # 构建精简 JSON
                 \$nvme_data = "{\n";
                 \$nvme_data .= "  \\"model_name\\": \\"\$model\\",\n";
@@ -3004,7 +3003,7 @@ EOF
         fi
 
         # 硬盘输出信息逻辑，如果硬盘不存在就输出空 JSON
-        # 使用 -i 获取基本信息 + -H 获取健康状态，避免 -a 返回过多数据
+        # 使用 -a 获取完整信息（-i 无法获取 power_on_time 和 ata_smart_attributes）
         cat >> $tmpf << EOF
 
         {
@@ -3024,21 +3023,20 @@ EOF
                 if (\$is_standby) {
                     \$sd_data = '{"standy": 1}';
                 } else {
-                    # 获取精简信息
-                    my \$sd_info_json = \`smartctl $sd -i -j 2>/dev/null\`;
-                    my \$sd_health_json = \`smartctl $sd -H -j 2>/dev/null\`;
-                    if (\$sd_info_json =~ /^\s*\{/) {
+                    # 使用 -a 获取完整信息（-i 无法获取 power_on_time 和 ata_smart_attributes）
+                    my \$sd_full_json = \`smartctl $sd -a -j 2>/dev/null\`;
+                    if (\$sd_full_json =~ /^\s*\{/) {
                         # 提取必要字段
-                        my \$model = (\$sd_info_json =~ /"model_name"\s*:\s*"([^"]+)"/) ? \$1 : '';
-                        my \$temp = (\$sd_info_json =~ /"temperature"\s*:\s*\{[^}]*"current"\s*:\s*(\d+)/) ? \$1 : 0;
-                        my \$hours = (\$sd_info_json =~ /"power_on_time"\s*:\s*\{[^}]*"hours"\s*:\s*(\d+)/) ? \$1 : 0;
-                        my \$cycles = (\$sd_info_json =~ /"power_cycle_count"\s*:\s*(\d+)/) ? \$1 : 0;
-                        my \$smart_passed = (\$sd_health_json =~ /"smart_status"\s*:\s*\{[^}]*"passed"\s*:\s*(true|false)/) ? \$1 : 'true';
+                        my \$model = (\$sd_full_json =~ /"model_name"\s*:\s*"([^"]+)"/) ? \$1 : '';
+                        my \$temp = (\$sd_full_json =~ /"temperature"\s*:\s*\{[^}]*"current"\s*:\s*(\d+)/) ? \$1 : 0;
+                        my \$hours = (\$sd_full_json =~ /"power_on_time"\s*:\s*\{[^}]*"hours"\s*:\s*(\d+)/) ? \$1 : 0;
+                        my \$cycles = (\$sd_full_json =~ /"power_cycle_count"\s*:\s*(\d+)/) ? \$1 : 0;
+                        my \$smart_passed = (\$sd_full_json =~ /"smart_status"\s*:\s*\{[^}]*"passed"\s*:\s*(true|false)/) ? \$1 : 'true';
                         # 获取异常断电次数（从 ATA SMART 属性）
                         my \$unsafe_shutdown = 0;
-                        if (\$sd_info_json =~ /"ata_smart_attributes"/) {
-                            my \$attr_174 = (\$sd_info_json =~ /"id"\s*:\s*174[^}]*"raw"\s*:\s*\{[^}]*"value"\s*:\s*(\d+)/) ? \$1 : 0;
-                            my \$attr_192 = (\$sd_info_json =~ /"id"\s*:\s*192[^}]*"raw"\s*:\s*\{[^}]*"value"\s*:\s*(\d+)/) ? \$1 : 0;
+                        if (\$sd_full_json =~ /"ata_smart_attributes"/) {
+                            my \$attr_174 = (\$sd_full_json =~ /"id"\s*:\s*174[^}]*"raw"\s*:\s*\{[^}]*"value"\s*:\s*(\d+)/) ? \$1 : 0;
+                            my \$attr_192 = (\$sd_full_json =~ /"id"\s*:\s*192[^}]*"raw"\s*:\s*\{[^}]*"value"\s*:\s*(\d+)/) ? \$1 : 0;
                             \$unsafe_shutdown = \$attr_174 || \$attr_192;
                         }
                         # 构建精简 JSON
