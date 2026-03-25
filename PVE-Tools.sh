@@ -3109,27 +3109,23 @@ EOF
         chmod +s /usr/sbin/smartctl 2>/dev/null
 
         # 为 RAID 卡设备生成监控代码
-        # 使用 -i 获取基本信息 + -H 获取健康状态，避免 -a 返回过多数据
+        # 使用 -a 获取完整信息（-i 无法获取 power_on_time）
         # RAID 设备的路径可能不是标准块设备，直接执行 smartctl
         cat >> $tmpf << EOF
 
-        # 获取 RAID 设备基本信息（精简数据量）
-        my \$raid_info = qx{timeout 1 smartctl $device $device_args -i -j 2>/dev/null};
-        my \$raid_health = qx{timeout 1 smartctl $device $device_args -H -j 2>/dev/null};
+        # 获取 RAID 设备完整信息
+        my \$raid_full = qx{timeout 1 smartctl $device $device_args -a -j 2>/dev/null};
         my \$raid_data = '{}';
-        if (\$raid_info =~ /^\s*\{/) {
+        if (\$raid_full =~ /^\s*\{/) {
             # 解析并精简数据，只保留必要字段
-            my \$info_json = \$raid_info;
-            my \$health_json = \$raid_health =~ /^\s*\{/ ? \$raid_health : '{}';
-            # 合并两个 JSON，只提取需要的字段
             \$raid_data = "{\n";
-            \$raid_data .= "  \\"model_name\\": \\"" . (\$info_json =~ /"model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
-            \$raid_data .= "  \\"scsi_model_name\\": \\"" . (\$info_json =~ /"scsi_model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
-            \$raid_data .= "  \\"scsi_vendor\\": \\"" . (\$info_json =~ /"scsi_vendor"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
-            \$raid_data .= "  \\"temperature\\": {\\"current\\": " . (\$info_json =~ /"temperature"\s*:\s*{[^}]*"current"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
-            \$raid_data .= "  \\"power_on_time\\": {\\"hours\\": " . (\$info_json =~ /"power_on_time"\s*:\s*{[^}]*"hours"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
-            \$raid_data .= "  \\"smart_support\\": {\\"available\\": " . (\$info_json =~ /"smart_support"\s*:\s*{[^}]*"available"\s*:\s*(true|false)/ ? \$1 : 'false') . "},\n";
-            \$raid_data .= "  \\"smart_status\\": {\\"passed\\": " . (\$health_json =~ /"smart_status"\s*:\s*{[^}]*"passed"\s*:\s*(true|false)/ ? \$1 : 'true') . "}\n";
+            \$raid_data .= "  \\"model_name\\": \\"" . (\$raid_full =~ /"model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
+            \$raid_data .= "  \\"scsi_model_name\\": \\"" . (\$raid_full =~ /"scsi_model_name"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
+            \$raid_data .= "  \\"scsi_vendor\\": \\"" . (\$raid_full =~ /"scsi_vendor"\s*:\s*"([^"]+)"/ ? \$1 : '') . "\\",\n";
+            \$raid_data .= "  \\"temperature\\": {\\"current\\": " . (\$raid_full =~ /"temperature"\s*:\s*{[^}]*"current"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
+            \$raid_data .= "  \\"power_on_time\\": {\\"hours\\": " . (\$raid_full =~ /"power_on_time"\s*:\s*{[^}]*"hours"\s*:\s*(\d+)/ ? \$1 : 0) . "},\n";
+            \$raid_data .= "  \\"smart_support\\": {\\"available\\": " . (\$raid_full =~ /"smart_support"\s*:\s*{[^}]*"available"\s*:\s*(true|false)/ ? \$1 : 'false') . "},\n";
+            \$raid_data .= "  \\"smart_status\\": {\\"passed\\": " . (\$raid_full =~ /"smart_status"\s*:\s*{[^}]*"passed"\s*:\s*(true|false)/ ? \$1 : 'true') . "}\n";
             \$raid_data .= "}";
         }
         \$res->{raid$raidi} = \$raid_data;
