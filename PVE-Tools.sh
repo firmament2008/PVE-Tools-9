@@ -2996,10 +2996,10 @@ EOF
         [ -f $sdcr ] || continue
 
         if [ "$(cat $sdcr)" = "0" ]; then
-            hddisk=false
+            hddisk=0
             sdtype="固态硬盘"
         else
-            hddisk=true
+            hddisk=1
             sdtype="机械硬盘"
         fi
 
