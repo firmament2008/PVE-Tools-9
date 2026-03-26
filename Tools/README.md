@@ -36,6 +36,9 @@
 - **monitor-all.sh** - 系统全局监控工具
 - **netdata.sh** - Netdata 实时监控系统安装
 
+### 网络工具
+- **ipv6-toggle.sh** - IPv6 开关工具（启用/禁用 IPv6）
+
 ## 使用方法
 
 ### 使用方式
